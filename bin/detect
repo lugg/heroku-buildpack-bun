@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# bin/detect <build-dir>
+# Determines if this buildpack should be used
+
+BUILD_DIR="$1"
+
+if [ -f "$BUILD_DIR/bun.lock" ] || [ -f "$BUILD_DIR/bun.lockb" ]; then
+  echo "Bun"
+  exit 0
+fi
+
+# Helpful error if package.json exists but no bun lockfile
+if [ -f "$BUILD_DIR/package.json" ]; then
+  echo "-----> Found package.json but no bun.lock or bun.lockb"
+  echo "       Run 'bun install' locally to generate a lockfile"
+fi
+
+exit 1

@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# bin/compile <build-dir> <cache-dir> <env-dir>
+
+set -eo pipefail
+
+BUILD_DIR="${1:-}"
+CACHE_DIR="${2:-}"
+ENV_DIR="${3:-}"
+BP_DIR=$(cd "$(dirname "${0:-}")" && cd .. && pwd)
+
+# Load helper functions
+source "$BP_DIR/lib/output.sh"
+source "$BP_DIR/lib/environment.sh"
+source "$BP_DIR/lib/json.sh"
+source "$BP_DIR/lib/cache.sh"
+source "$BP_DIR/lib/failure.sh"
+
+# Export environment variables from ENV_DIR
+export_env_dir "$ENV_DIR"
+
+# Determine app directory (for monorepo support)
+APP_PATH="${BUN_APP_PATH:-.}"
+APP_DIR="$BUILD_DIR/$APP_PATH"
+
+if [ "$APP_PATH" != "." ] && [ ! -d "$APP_DIR" ]; then
+  fail "BUN_APP_PATH '$APP_PATH' does not exist"
+fi
+
+header "Bun Buildpack"
+
+# Resolve Bun version
+BUN_VERSION="${BUN_VERSION:-}"
+
+if [ -z "$BUN_VERSION" ] && [ -f "$BUILD_DIR/.bun-version" ]; then
+  BUN_VERSION=$(cat "$BUILD_DIR/.bun-version" | tr -d '[:space:]')
+  info "Using Bun version from .bun-version: $BUN_VERSION"
+fi
+
+# Normalize version (add v prefix if needed)
+if [ -n "$BUN_VERSION" ] && [[ ! "$BUN_VERSION" =~ ^v ]]; then
+  BUN_VERSION="v$BUN_VERSION"
+fi
+
+# Install Bun
+header "Installing Bun"
+
+BUN_INSTALL="$BUILD_DIR/.heroku/bun"
+BUN_CACHE="$CACHE_DIR/bun"
+CACHE_SIGNATURE="$STACK-$BUN_VERSION"
+
+mkdir -p "$BUN_INSTALL"
+
+# Check cache
+if [ -f "$BUN_CACHE/signature" ] && [ "$(cat "$BUN_CACHE/signature")" = "$CACHE_SIGNATURE" ]; then
+  info "Restoring Bun from cache"
+  cp -r "$BUN_CACHE/bin" "$BUN_INSTALL/"
+else
+  info "Downloading Bun${BUN_VERSION:+ $BUN_VERSION}..."
+
+  INSTALL_ARGS=""
+  if [ -n "$BUN_VERSION" ]; then
+    INSTALL_ARGS="-s bun-$BUN_VERSION"
+  fi
+
+  export BUN_INSTALL
+  curl -fsSL https://bun.sh/install | bash $INSTALL_ARGS 2>&1 | indent
+
+  # Cache the installation
+  mkdir -p "$BUN_CACHE"
+  cp -r "$BUN_INSTALL/bin" "$BUN_CACHE/"
+  echo "$CACHE_SIGNATURE" > "$BUN_CACHE/signature"
+fi
+
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+info "Installed $(bun --version)"
+
+# Set up runtime environment
+PROFILE_DIR="$BUILD_DIR/.profile.d"
+mkdir -p "$PROFILE_DIR"
+
+cat > "$PROFILE_DIR/bun.sh" << 'EOF'
+export PATH="$HOME/.heroku/bun/bin:$PATH"
+export BUN_INSTALL="$HOME/.heroku/bun"
+EOF
+
+# Export to subsequent buildpacks
+cat > "$BP_DIR/export" << EOF
+export PATH="$BUILD_DIR/.heroku/bun/bin:\$PATH"
+export BUN_INSTALL="$BUILD_DIR/.heroku/bun"
+EOF
+
+# Change to app directory for monorepo
+cd "$APP_DIR"
+
+# Install dependencies
+header "Installing dependencies"
+
+INSTALL_FLAGS=""
+if [ "${BUN_FROZEN_LOCKFILE:-true}" = "true" ]; then
+  INSTALL_FLAGS="--frozen-lockfile"
+  info "Using frozen lockfile"
+fi
+
+# Always install from root for workspaces
+cd "$BUILD_DIR"
+bun install $INSTALL_FLAGS 2>&1 | indent
+
+# Change back to app directory for scripts
+cd "$APP_DIR"
+
+# Run lifecycle scripts
+APP_PACKAGE_JSON="$APP_DIR/package.json"
+
+if has_script "$APP_PACKAGE_JSON" "heroku-prebuild"; then
+  header "Running heroku-prebuild"
+  bun run heroku-prebuild 2>&1 | indent
+fi
+
+if has_script "$APP_PACKAGE_JSON" "build"; then
+  header "Running build"
+  bun run build 2>&1 | indent
+fi
+
+if has_script "$APP_PACKAGE_JSON" "heroku-postbuild"; then
+  header "Running heroku-postbuild"
+  bun run heroku-postbuild 2>&1 | indent
+fi
+
+# Prune dev dependencies if requested
+if [ "${BUN_PRUNE_DEVDEPENDENCIES:-false}" = "true" ]; then
+  header "Pruning devDependencies"
+  cd "$BUILD_DIR"
+  bun install --production $INSTALL_FLAGS 2>&1 | indent
+fi
+
+header "Build succeeded!"
