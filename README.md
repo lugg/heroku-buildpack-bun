@@ -36,19 +36,50 @@ echo "1.1.38" > .bun-version
 
 ## Monorepo Support
 
-For monorepos, set `BUN_APP_PATH` to the app subdirectory:
+For monorepos with Bun workspaces, you need to configure both **build-time** and **runtime** paths.
+
+### Build-time: `BUN_APP_PATH`
+
+`BUN_APP_PATH` controls where lifecycle scripts run during the build:
 
 ```bash
 heroku config:set BUN_APP_PATH=apps/server
 ```
 
 The buildpack will:
-1. Run `bun install` from the repo root (for workspace resolution)
-2. Run lifecycle scripts from the app subdirectory
+1. Run `bun install` from repo root (resolves all workspace dependencies)
+2. Run `heroku-prebuild`, `build`, `heroku-postbuild` from `apps/server/`
+
+### Runtime: Procfile with `--cwd`
+
+Heroku always starts dynos from the repo root. Use `--cwd` in your Procfile:
+
+```
+web: bun run --cwd apps/server src/index.ts
+worker: bun run --cwd apps/server src/worker.ts
+release: bun run --cwd apps/server db:migrate
+```
+
+The Procfile must be at the repo root.
+
+### Example monorepo structure
+
+```
+my-monorepo/
+├── apps/
+│   └── server/
+│       ├── src/index.ts
+│       └── package.json    # may have build script
+├── packages/
+│   └── shared/
+├── package.json            # workspaces: ["apps/*", "packages/*"]
+├── bun.lock
+└── Procfile                # web: bun run --cwd apps/server src/index.ts
+```
 
 ## Lifecycle Scripts
 
-The buildpack runs these scripts from your `package.json` if present:
+The buildpack runs these scripts if present in your `package.json` (or `BUN_APP_PATH/package.json` for monorepos):
 
 1. `bun install --frozen-lockfile`
 2. `bun run heroku-prebuild`
@@ -57,13 +88,15 @@ The buildpack runs these scripts from your `package.json` if present:
 
 ## Procfile
 
-Create a `Procfile` to define your process types:
+Create a `Procfile` at your repo root to define process types:
 
 ```
 web: bun run src/index.ts
 worker: bun run src/worker.ts
 release: bun run db:migrate
 ```
+
+For monorepos, use `--cwd` to run from a subdirectory (see above).
 
 ## License
 
