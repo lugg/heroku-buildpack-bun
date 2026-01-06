@@ -36,23 +36,11 @@ echo "1.1.38" > .bun-version
 
 ## Monorepo Support
 
-For monorepos with Bun workspaces, you need to configure both **build-time** and **runtime** paths.
+For monorepos with Bun workspaces, use `--cwd` in your Procfile to run from a subdirectory.
 
-### Build-time: `BUN_APP_PATH`
+### Procfile with `--cwd`
 
-`BUN_APP_PATH` controls where lifecycle scripts run during the build:
-
-```bash
-heroku config:set BUN_APP_PATH=apps/server
-```
-
-The buildpack will:
-1. Run `bun install` from repo root (resolves all workspace dependencies)
-2. Run `heroku-prebuild`, `build`, `heroku-postbuild` from `apps/server/`
-
-### Runtime: Procfile with `--cwd`
-
-Heroku always starts dynos from the repo root. Use `--cwd` in your Procfile:
+Heroku starts dynos from the repo root. Use `--cwd` to run from your app directory:
 
 ```
 web: bun run --cwd apps/server src/index.ts
@@ -60,7 +48,7 @@ worker: bun run --cwd apps/server src/worker.ts
 release: bun run --cwd apps/server db:migrate
 ```
 
-The Procfile must be at the repo root.
+That's it! The buildpack runs `bun install` from root, which resolves all workspace dependencies.
 
 ### Example monorepo structure
 
@@ -69,13 +57,25 @@ my-monorepo/
 ├── apps/
 │   └── server/
 │       ├── src/index.ts
-│       └── package.json    # may have build script
+│       ├── src/worker.ts
+│       └── package.json
 ├── packages/
 │   └── shared/
+│       └── package.json
 ├── package.json            # workspaces: ["apps/*", "packages/*"]
 ├── bun.lock
-└── Procfile                # web: bun run --cwd apps/server src/index.ts
+└── Procfile                # at root, uses --cwd
 ```
+
+### Optional: `BUN_APP_PATH` for build scripts
+
+Only needed if your app subdirectory has `build`, `heroku-prebuild`, or `heroku-postbuild` scripts:
+
+```bash
+heroku config:set BUN_APP_PATH=apps/server
+```
+
+This runs those lifecycle scripts from `apps/server/` instead of root.
 
 ## Lifecycle Scripts
 
