@@ -1,6 +1,6 @@
 # heroku-buildpack-bun
 
-Heroku buildpack for [Bun](https://bun.sh) runtime.
+Heroku buildpack for [Bun](https://bun.sh) runtime. Used in production at [Lugg](https://lugg.com).
 
 ## Usage
 
